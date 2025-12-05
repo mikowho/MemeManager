@@ -1,4 +1,4 @@
-# MemeManager (表情包管理器) - 毕业设计 / 学习项目
+# MemeManager (表情包管理器) - 娱乐自用项目
 
 一款基于 Android Jetpack Compose 开发的本地表情包管理工具。
 本项目是 **niko** 与 **Gemini AI** 共同学习和探索 Android 开发的成果。
