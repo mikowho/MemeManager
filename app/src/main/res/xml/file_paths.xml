@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 允许分享 files/stickers 目录下的文件 -->
+    <files-path name="my_stickers" path="stickers/" />
+    <cache-path name="my_cache" path="/" />
+</paths>
