@@ -37,23 +37,22 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddCircle
-import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.SecondaryIndicator
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
@@ -62,8 +61,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -74,7 +73,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-// import androidx.core.content.edit // <--- 关键：删除了这个导致报错的引用！！！
+import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.rememberAsyncImagePainter
@@ -126,6 +125,7 @@ fun MemeApp() {
     val keyboardController = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
 
+    // 状态
     var urlText by remember { mutableStateOf("") }
     var orderedPackageNames by remember {
         val json = prefs.getString("folder_order", "[]")
@@ -147,6 +147,7 @@ fun MemeApp() {
     var currentScreen by remember { mutableStateOf("home") }
     var isProcessing by remember { mutableStateOf(false) }
 
+    // 弹窗
     var showShareSheet by remember { mutableStateOf<File?>(null) }
     var showAddAppDialog by remember { mutableStateOf(false) }
     var showDeletePackageDialog by remember { mutableStateOf(false) }
@@ -182,6 +183,17 @@ fun MemeApp() {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // 逻辑函数
+    fun updateOrder(newList: List<String>) {
+        orderedPackageNames = newList.toList()
+        prefs.edit().putString("folder_order", gson.toJson(newList)).apply()
+    }
+
+    fun updatePinnedApps(newSet: Set<String>) {
+        pinnedPackages = newSet
+        prefs.edit().putStringSet("pinned_apps", newSet).apply()
+    }
+
     fun toggleFloatingService(enable: Boolean) {
         if (enable) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
@@ -205,25 +217,26 @@ fun MemeApp() {
         if (enable) showNotification(context) else cancelNotification(context)
     }
 
-    fun updateOrder(newList: List<String>) {
-        orderedPackageNames = newList.toList()
-        prefs.edit().putString("folder_order", gson.toJson(newList)).apply()
-    }
-
+    // === 核心修复：稳健的刷新与排序逻辑 ===
     fun refreshStickers(keepTab: Boolean = false) {
         scope.launch(Dispatchers.IO) {
             if (!stickersRootDir.exists()) stickersRootDir.mkdirs()
             if (stickersRootDir.exists()) {
                 val allFolders = stickersRootDir.listFiles()?.filter { it.isDirectory }?.map { it.name } ?: emptyList()
 
-                val currentOrder = orderedPackageNames.toMutableList()
-                currentOrder.retainAll(allFolders)
-                val newFolders = allFolders.filter { !currentOrder.contains(it) }
+                // 1. 以 SharedPreferences 里的顺序为准 (orderedPackageNames)
+                val finalOrder = orderedPackageNames.toMutableList()
+
+                // 2. 清理：移除已经不存在的文件夹
+                val changed = finalOrder.retainAll(allFolders)
+
+                // 3. 新增：把新发现的文件夹加到最前面
+                val newFolders = allFolders.filter { !finalOrder.contains(it) }
                 if (newFolders.isNotEmpty()) {
-                    val sortedNew = newFolders.sortedByDescending { File(stickersRootDir, it).lastModified() }
-                    currentOrder.addAll(0, sortedNew)
+                    finalOrder.addAll(0, newFolders.sortedByDescending { File(stickersRootDir, it).lastModified() })
                 }
 
+                // 4. 构建 Map
                 val newMap = HashMap<String, List<File>>()
                 allFolders.forEach { name ->
                     val folder = File(stickersRootDir, name)
@@ -235,13 +248,16 @@ fun MemeApp() {
 
                 withContext(Dispatchers.Main) {
                     stickerPackages = newMap
-                    updateOrder(currentOrder)
+                    // 只有当列表真的变了（有增删）才更新顺序，防止覆盖上移操作
+                    if (newFolders.isNotEmpty() || changed) {
+                        updateOrder(finalOrder)
+                    }
 
-                    if (keepTab && selectedPackageName != null && currentOrder.contains(selectedPackageName)) {
+                    if (keepTab && selectedPackageName != null && finalOrder.contains(selectedPackageName)) {
                         // keep
                     } else {
-                        if (selectedPackageName == null || !currentOrder.contains(selectedPackageName)) {
-                            selectedPackageName = currentOrder.firstOrNull()
+                        if (selectedPackageName == null || !finalOrder.contains(selectedPackageName)) {
+                            selectedPackageName = finalOrder.firstOrNull()
                         }
                     }
                 }
@@ -255,6 +271,7 @@ fun MemeApp() {
             Toast.makeText(context, "文件夹已存在", Toast.LENGTH_SHORT).show()
         } else {
             targetDir.mkdirs()
+            // 显式插入到第一位
             val newOrder = orderedPackageNames.toMutableList()
             newOrder.add(0, name)
             updateOrder(newOrder)
@@ -267,25 +284,33 @@ fun MemeApp() {
     fun togglePinFolder(folderName: String) {
         val newPinned = pinnedFolders.toMutableList()
         val isPinned = newPinned.contains(folderName)
-        if (isPinned) newPinned.remove(folderName) else newPinned.add(0, folderName)
-        pinnedFolders = newPinned.toList()
-        prefs.edit().putString("pinned_folders_list", gson.toJson(newPinned)).apply()
 
-        if (!isPinned) {
+        if (isPinned) {
+            newPinned.remove(folderName)
+        } else {
+            newPinned.add(0, folderName)
+            // 置顶时，同时把顺序移到最前
             val newOrder = orderedPackageNames.toMutableList()
             newOrder.remove(folderName)
             newOrder.add(0, folderName)
             updateOrder(newOrder)
         }
+
+        pinnedFolders = newPinned.toList()
+        prefs.edit().putString("pinned_folders_list", gson.toJson(newPinned)).apply()
         refreshStickers(keepTab = true)
     }
 
+    // === 修复：上移逻辑 ===
     fun moveFolderUp(name: String) {
+        // 直接操作当前内存中的 orderedPackageNames
         val list = orderedPackageNames.toMutableList()
         val index = list.indexOf(name)
         if (index > 0) {
             Collections.swap(list, index, index - 1)
+            // 立即保存并更新 State
             updateOrder(list)
+            // 刷新 UI（但不重新扫描文件，只刷列表顺序）
             refreshStickers(keepTab = true)
         }
     }
@@ -336,8 +361,7 @@ fun MemeApp() {
         if (!newOrder.contains(targetName)) { newOrder.add(0, targetName); updateOrder(newOrder) }
         refreshStickers(keepTab = false)
         selectedPackageName = targetName
-
-        urlText = "" // 修复：清空输入框
+        urlText = ""
         Toast.makeText(context, "✅ 导入成功", Toast.LENGTH_SHORT).show()
     }
 
@@ -410,8 +434,6 @@ fun MemeApp() {
         return pm.queryIntentActivities(intent, 0).map { it.activityInfo.packageName }.distinct().mapNotNull { pkg -> try { val appInfo = pm.getApplicationInfo(pkg, 0); AppInfo(pkg, pm.getApplicationLabel(appInfo).toString(), pm.getApplicationIcon(appInfo)) } catch (e: Exception) { null } }
     }
 
-    fun updatePinnedApps(newSet: Set<String>) { pinnedPackages = newSet; prefs.edit().putStringSet("pinned_apps", newSet).apply() }
-
     fun shareToApp(imageFile: File, packageName: String?) {
         val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.provider", imageFile)
         val intent = Intent(Intent.ACTION_SEND).apply {
@@ -467,6 +489,7 @@ fun MemeApp() {
                 if (json != null) {
                     val type = object : TypeToken<List<StickerRecord>>() {}.type
                     val records: List<StickerRecord> = gson.fromJson(json, type)
+
                     val newHistory = downloadHistory.toMutableList()
                     records.forEach { record ->
                         newHistory.removeAll { h -> h.folderName == record.folderName }
@@ -481,7 +504,7 @@ fun MemeApp() {
                         var count = 0
                         records.forEach { record ->
                             if (record.url.isNotEmpty()) {
-                                downloadAndUnzipSync(record.url, record.folderName)
+                                downloadAndUnzipSync(context, record.url, record.folderName)
                                 count++
                             }
                         }
@@ -517,50 +540,16 @@ fun MemeApp() {
         Column(modifier = Modifier.fillMaxSize()) {
             Surface(shadowElevation = 4.dp, color = Color.White) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    // === 极简单行工具栏 ===
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("通知", style = MaterialTheme.typography.bodySmall)
-                            Switch(
-                                checked = enableNotification,
-                                onCheckedChange = { toggleNotification(it) },
-                                modifier = Modifier.scale(0.7f)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("悬浮", style = MaterialTheme.typography.bodySmall)
-                            Switch(
-                                checked = isFloatingEnabled,
-                                onCheckedChange = { toggleFloatingService(it) },
-                                modifier = Modifier.scale(0.7f)
-                            )
-                        }
-
-                        // 右边：操作按钮
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("表情包管理器", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color.Black)
+                        Row {
                             IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, "设置") }
                             IconButton(onClick = { currentScreen = "manage" }) { Icon(Icons.AutoMirrored.Filled.List, "管理") }
                         }
                     }
-
                     Spacer(modifier = Modifier.height(8.dp))
-
-                    // === 下载栏 ===
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = urlText,
-                            onValueChange = { urlText = it },
-                            label = { Text("ZIP 链接", fontSize = 12.sp) },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            shape = RoundedCornerShape(8.dp),
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, unfocusedBorderColor = Color.LightGray),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                            keyboardActions = KeyboardActions(onGo = { handleDownload(urlText) })
-                        )
+                        OutlinedTextField(value = urlText, onValueChange = { urlText = it }, label = { Text("ZIP 链接", fontSize = 12.sp) }, modifier = Modifier.weight(1f), singleLine = true, shape = RoundedCornerShape(8.dp), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, unfocusedBorderColor = Color.LightGray), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { handleDownload(urlText) }))
                         Spacer(modifier = Modifier.width(8.dp))
                         TextButton(onClick = { importLocalZipLauncher.launch("application/zip") }, modifier = Modifier.padding(horizontal = 4.dp)) { Text("➕ 导入", fontSize = 12.sp) }
                         Button(onClick = { handleDownload(urlText) }, shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) { Icon(Icons.Default.AddCircle, null, modifier = Modifier.size(18.dp)); Spacer(modifier = Modifier.width(4.dp)); Text("下载") }
@@ -626,22 +615,16 @@ fun MemeApp() {
         }
     }
 
-    // === 设置弹窗 ===
     if (showSettingsDialog) {
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
             title = { Text("设置") },
             text = {
                 Column {
-                    Text("表情网格大小: ${gridSize.toInt()}dp")
-                    Slider(value = gridSize, onValueChange = { gridSize = it; prefs.edit().putFloat("grid_size", it).apply() }, valueRange = 60f..180f)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    HorizontalDivider()
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        OutlinedButton(onClick = { restoreBackupLauncher.launch("application/json"); showSettingsDialog = false }) { Text("导入恢复") }
-                        Button(onClick = { exportBackup(); showSettingsDialog = false }, enabled = !isProcessing) { Text("导出备份") }
-                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text("通知栏快捷入口"); Switch(checked = enableNotification, onCheckedChange = { toggleNotification(it) }) }
+                    Spacer(modifier = Modifier.height(12.dp)); Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text("悬浮窗快捷入口"); Switch(checked = isFloatingEnabled, onCheckedChange = { toggleFloatingService(it) }) }
+                    Spacer(modifier = Modifier.height(12.dp)); HorizontalDivider(); Spacer(modifier = Modifier.height(12.dp)); Text("表情网格大小: ${gridSize.toInt()}dp"); Slider(value = gridSize, onValueChange = { gridSize = it; prefs.edit().putFloat("grid_size", it).apply() }, valueRange = 60f..180f)
+                    Spacer(modifier = Modifier.height(16.dp)); HorizontalDivider(); Spacer(modifier = Modifier.height(16.dp)); Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) { OutlinedButton(onClick = { restoreBackupLauncher.launch("application/json"); showSettingsDialog = false }) { Text("导入恢复") }; Button(onClick = { exportBackup(); showSettingsDialog = false }, enabled = !isProcessing) { Text("导出备份") } }
                 }
             },
             confirmButton = { TextButton(onClick = { showSettingsDialog = false }) { Text("关闭") } }
@@ -653,14 +636,34 @@ fun MemeApp() {
     if (showDuplicateDialog != null) { val (t, n) = showDuplicateDialog!!; AlertDialog(onDismissRequest = { showDuplicateDialog = null }, title = { Text("名称冲突") }, text = { Column { Text("文件夹 \"$n\" 已存在。"); Spacer(modifier = Modifier.height(8.dp)); OutlinedTextField(value = duplicateRenameText, onValueChange = { duplicateRenameText = it }, label = { Text("新名称") }, singleLine = true) } }, confirmButton = { Button(onClick = { if (duplicateRenameText.isNotBlank() && !duplicateRenameText.contains("/")) { processDownload(t, duplicateRenameText, "", false); showDuplicateDialog = null } }) { Text("保存副本") } }, dismissButton = { TextButton(onClick = { processDownload(t, n, "", true); showDuplicateDialog = null }) { Text("覆盖旧的") } }) }
     if (showShareSheet != null) { ModalBottomSheet(onDismissRequest = { showShareSheet = null }, containerColor = Color.White) { Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) { Text("发送...", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp)); LazyRow(horizontalArrangement = Arrangement.spacedBy(20.dp)) { items(pinnedPackages.toList()) { pkg -> val pm = context.packageManager; val info = try { pm.getApplicationInfo(pkg, 0) } catch (e:Exception) { null }; if (info != null) { Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { shareToApp(showShareSheet!!, pkg); showShareSheet = null }) { Image(painter = rememberAsyncImagePainter(pm.getApplicationIcon(info)), contentDescription = null, modifier = Modifier.size(50.dp)); Spacer(modifier = Modifier.height(4.dp)); Text(pm.getApplicationLabel(info).toString().take(4), fontSize = 12.sp, maxLines = 1) } } }; item { Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { showAddAppDialog = true }) { Box(modifier = Modifier.size(50.dp).clip(CircleShape).background(Color(0xFFF0F0F0)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Add, null, tint = Color.Gray) }; Text("管理", fontSize = 12.sp) } }; item { Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { shareToApp(showShareSheet!!, null); showShareSheet = null }) { Box(modifier = Modifier.size(50.dp).clip(CircleShape).background(Color(0xFFF0F0F0)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Share, null, tint = Color.Gray) }; Text("更多", fontSize = 12.sp) } } }; Spacer(modifier = Modifier.height(40.dp)) } } }
     if (showAddAppDialog) { val allApps = remember { getShareableApps() }; AlertDialog(onDismissRequest = { showAddAppDialog = false }, title = { Text("常用") }, text = { LazyVerticalGrid(columns = GridCells.Fixed(4), modifier = Modifier.height(300.dp)) { items(allApps) { app -> val isSelected = pinnedPackages.contains(app.packageName); Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(4.dp).clip(RoundedCornerShape(8.dp)).background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent).clickable { val newSet = pinnedPackages.toMutableSet(); if (isSelected) newSet.remove(app.packageName) else newSet.add(app.packageName); updatePinnedApps(newSet) }.padding(8.dp)) { Image(painter = rememberAsyncImagePainter(app.icon), contentDescription = null, modifier = Modifier.size(32.dp)); Text(app.label, fontSize = 10.sp, maxLines = 1) } } } }, confirmButton = { TextButton(onClick = { showAddAppDialog = false }) { Text("完成") } }) }
+    // === 修复：删除单张图片，彻底物理删除 ===
+    if (showDeleteImageDialog != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteImageDialog = null },
+            title = { Text("删除") },
+            text = { Text("确定删除这张表情？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    // 彻底删除文件
+                    if (showDeleteImageDialog!!.delete()) {
+                        refreshStickers(keepTab = true)
+                        Toast.makeText(context, "已删除", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "删除失败", Toast.LENGTH_SHORT).show()
+                    }
+                    showDeleteImageDialog = null
+                }, colors = ButtonDefaults.textButtonColors(contentColor = Color.Red)) { Text("删除") }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteImageDialog = null }) { Text("取消") } }
+        )
+    }
     if (showDeletePackageDialog) { AlertDialog(onDismissRequest = { showDeletePackageDialog = false }, title = { Text("删除表情包") }, text = { Text("确定删除整个包？") }, confirmButton = { TextButton(onClick = { val pkg = stickerPackages.keys.toList().find { it == selectedPackageName }; if (pkg != null) { File(stickersRootDir, pkg).deleteRecursively(); val newOrder = orderedPackageNames.toMutableList(); newOrder.remove(pkg); updateOrder(newOrder); refreshStickers(keepTab = false); showDeletePackageDialog = false } }, colors = ButtonDefaults.textButtonColors(contentColor = Color.Red)) { Text("删除") } }, dismissButton = { TextButton(onClick = { showDeletePackageDialog = false }) { Text("取消") } }) }
-    if (showDeleteImageDialog != null) { AlertDialog(onDismissRequest = { showDeleteImageDialog = null }, title = { Text("删除") }, text = { Text("确定删除？") }, confirmButton = { TextButton(onClick = { showDeleteImageDialog?.delete(); refreshStickers(keepTab = true); showDeleteImageDialog = null }, colors = ButtonDefaults.textButtonColors(contentColor = Color.Red)) { Text("删除") } }, dismissButton = { TextButton(onClick = { showDeleteImageDialog = null }) { Text("取消") } }) }
 }
 
-// 底部函数
+// 底部函数保持不变...
 fun showNotification(context: Context) { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager; nm.createNotificationChannel(NotificationChannel("meme_shortcut", "快捷启动", NotificationManager.IMPORTANCE_LOW)); nm.notify(1001, android.app.Notification.Builder(context, "meme_shortcut").setSmallIcon(android.R.drawable.ic_menu_gallery).setContentTitle("表情包").setContentText("点击斗图").setContentIntent(PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK }, PendingIntent.FLAG_IMMUTABLE)).setOngoing(true).build()) } }
 fun cancelNotification(context: Context) { val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager; nm.cancel(1001) }
 fun downloadZip(url: String, context: android.content.Context, onDownloadSuccess: (File) -> Unit) { val client = okhttp3.OkHttpClient(); Thread { try { val response = client.newCall(okhttp3.Request.Builder().url(url).build()).execute(); if (response.isSuccessful) { val destFile = File(context.cacheDir, "temp_sticker.zip"); FileOutputStream(destFile).use { it.write(response.body!!.bytes()) }; (context as android.app.Activity).runOnUiThread { onDownloadSuccess(destFile) } } else { (context as android.app.Activity).runOnUiThread { Toast.makeText(context, "下载失败", Toast.LENGTH_SHORT).show() } } } catch (e: Exception) { (context as android.app.Activity).runOnUiThread { Toast.makeText(context, "错误: ${e.message}", Toast.LENGTH_SHORT).show() } } }.start() }
-fun downloadAndUnzipSync(url: String, targetName: String) { try { val client = OkHttpClient(); val response = client.newCall(Request.Builder().url(url).build()).execute(); if (response.isSuccessful) { val destFile = File(Environment.getExternalStorageDirectory(), "temp_restore.zip"); FileOutputStream(destFile).use { it.write(response.body!!.bytes()) }; unzipSync(destFile, File(Environment.getExternalStorageDirectory(), targetName)) } } catch (e: Exception) { e.printStackTrace() } }
+fun downloadAndUnzipSync(context: Context, url: String, targetName: String) { try { val client = OkHttpClient(); val response = client.newCall(Request.Builder().url(url).build()).execute(); if (response.isSuccessful) { val destFile = File(context.cacheDir, "temp_restore.zip"); FileOutputStream(destFile).use { it.write(response.body!!.bytes()) }; val targetDir = File(context.filesDir, "stickers/$targetName"); if (!targetDir.exists()) targetDir.mkdirs(); unzipSync(destFile, targetDir) } } catch (e: Exception) { e.printStackTrace() } }
 fun unzipSync(zipFile: File, targetDir: File) { try { ZipInputStream(java.io.FileInputStream(zipFile)).use { zip -> var entry = zip.nextEntry; while (entry != null) { val newFile = File(targetDir, entry.name); if (entry.isDirectory) newFile.mkdirs() else { newFile.parentFile?.mkdirs(); FileOutputStream(newFile).use { out -> zip.copyTo(out) } }; entry = zip.nextEntry } } } catch (e: Exception) { e.printStackTrace() } }
 fun unzip(zipFile: File, targetDir: File) { unzipSync(zipFile, targetDir) }
