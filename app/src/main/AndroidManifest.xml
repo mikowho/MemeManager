@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 原有的权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- === 新增：悬浮窗权限 === -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <!-- ... 其他权限 ... -->
 
     <!-- === 新增：允许查询所有已安装应用 (为了构建应用选择列表) === -->
@@ -56,7 +59,7 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
-
+        <service android:name=".FloatingService" android:enabled="true" android:exported="false" />
     </application>
 
 </manifest>
