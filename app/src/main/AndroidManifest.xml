@@ -8,18 +8,15 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- 原有的权限 -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <!-- === 新增：悬浮窗权限 === -->
+
+    <!-- 悬浮窗权限 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
-    <!-- ... 其他权限 ... -->
-
-    <!-- === 新增：允许查询所有已安装应用 (为了构建应用选择列表) === -->
+    <!-- 查询应用列表权限 -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
-    <!-- 2. 可见性声明 (必须放在 application 标签的外面！) -->
+    <!-- 2. 可见性声明 -->
     <queries>
         <package android:name="com.tencent.mm" />
         <package android:name="com.tencent.mobileqq" />
@@ -41,15 +38,45 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:label="@string/app_name"
             android:theme="@style/Theme.MemeManagement">
+
+            <!-- 1. 启动入口 -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- 2. 外部打开 ZIP (针对 TG/文件管理器) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="application/octet-stream" /> <!-- 关键：TG有时用这个 -->
+            </intent-filter>
+
+            <!-- 3. 兜底匹配 (针对无 MIME 的文件路径) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:mimeType="*/*" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.zip" />
+                <data android:pathPattern=".*\\..*\\.zip" />
+            </intent-filter>
         </activity>
 
-        <!-- 文件分享通行证 (FileProvider) -->
+        <!-- FileProvider -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.provider"
@@ -59,6 +86,7 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
         <service android:name=".FloatingService" android:enabled="true" android:exported="false" />
     </application>
 

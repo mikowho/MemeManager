@@ -57,6 +57,9 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+    implementation("io.coil-kt:coil:2.6.0")       // 核心库 (如果已有可忽略)
+    implementation("io.coil-kt:coil-gif:2.6.0")   // 支持 GIF
+    implementation("io.coil-kt:coil-video:2.6.0") // 支持 WebM (作为视频帧预览)
     // 图标扩展库 (为了使用 Folder, ArrowUpward 等图标)
     implementation("androidx.compose.material:material-icons-extended")
 
